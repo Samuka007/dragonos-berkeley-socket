@@ -1,0 +1,28 @@
+[package]
+name = "berkeley-socket"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+smoltcp = { version = "0.12.0", default-features = false, features = [
+    "std",
+    "alloc",
+    "log",
+    "medium-ethernet",
+    "medium-ip",
+    "proto-ipv4",
+    "socket-udp",
+    "socket-tcp",
+]}
+
+spin = "0.9.4"
+
+linux-errnos = "*"
+hashbrown = "0.15.2"
+bitflags = "2.9.0"
+num-derive = "0.4.2"
+num-traits = "0.2.15"
+log = "*"
+netsock = "0.3.0"
+libc = "0.2.172"
+lazy_static = "1.5.0"
