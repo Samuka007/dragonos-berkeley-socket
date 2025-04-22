@@ -1,8 +1,4 @@
-use std::{
-    sync::atomic::AtomicBool,
-    thread::sleep,
-    time::Duration,
-};
+use std::{sync::atomic::AtomicBool, thread::sleep, time::Duration};
 
 use linux_errnos::Errno;
 

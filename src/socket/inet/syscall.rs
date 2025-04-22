@@ -5,7 +5,7 @@ use smoltcp::{self, wire::IpProtocol};
 use crate::{
     posix::SOCK,
     socket::{
-        inet::UdpSocket,
+        inet::{TcpSocket, UdpSocket},
         Family,
         Socket, // SocketInode,
     },
@@ -19,28 +19,22 @@ fn create_inet_socket(
     // log::debug!("type: {:?}, protocol: {:?}", socket_type, protocol);
     match socket_type {
         SOCK::Datagram => match protocol {
-            IpProtocol::HopByHop | IpProtocol::Udp => {
-                Ok(UdpSocket::new(false))
+            IpProtocol::HopByHop | IpProtocol::Udp => Ok(UdpSocket::new(false)),
+            _ => Err(SystemError::EPROTONOSUPPORT),
+        },
+        SOCK::Stream => match protocol {
+            IpProtocol::HopByHop | IpProtocol::Tcp => {
+                log::debug!("create tcp socket");
+                Ok(TcpSocket::new(false, version))
             }
             _ => {
                 Err(SystemError::EPROTONOSUPPORT)
             }
         },
-        // SOCK::Stream => match protocol {
-        //     IpProtocol::HopByHop | IpProtocol::Tcp => {
-        //         log::debug!("create tcp socket");
-        //         return Ok(TcpSocket::new(false, version));
-        //     }
-        //     _ => {
-        //         return Err(SystemError::EPROTONOSUPPORT);
-        //     }
-        // },
         SOCK::Raw => {
             todo!("raw")
         }
-        _ => {
-            Err(SystemError::EPROTONOSUPPORT)
-        }
+        _ => Err(SystemError::EPROTONOSUPPORT),
     }
 }
 

@@ -33,9 +33,9 @@ pub trait Socket: Sync + Send + Debug + Any {
     // /// 接受连接，仅用于listening stream socket
     // /// ## Block
     // /// 如果没有连接到来，会阻塞
-    // fn accept(&self) -> Result<(Arc<SocketInode>, Endpoint), SystemError> {
-    //     Err(SystemError::ENOSYS)
-    // }
+    fn accept(&self) -> Result<(Arc<dyn Socket>, Endpoint), SystemError> {
+        Err(SystemError::ENOSYS)
+    }
     /// # `bind`
     /// 对应于POSIX的bind函数，用于绑定到本机指定的端点
     fn bind(&self, endpoint: Endpoint) -> Result<(), SystemError> {

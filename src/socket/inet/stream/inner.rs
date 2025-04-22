@@ -1,13 +1,14 @@
 use core::sync::atomic::AtomicUsize;
 
+use crate::event_poll::EPollEventType;
 use crate::libs::rwlock::RwLock;
 // use crate::net::socket::EPollEventType;
 use crate::socket::{self, inet::Types};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use linux_errnos::Errno as SystemError;
 use smoltcp;
 use smoltcp::socket::tcp;
-use linux_errnos::Errno as SystemError;
 
 // pub const DEFAULT_METADATA_BUF_SIZE: usize = 1024;
 pub const DEFAULT_RX_BUF_SIZE: usize = 512 * 1024;
@@ -163,11 +164,11 @@ impl Init {
         }
 
         inners.push(inner);
-        return Ok(Listening {
+        Ok(Listening {
             inners,
             connect: AtomicUsize::new(0),
             listen_addr,
-        });
+        })
     }
 
     pub(super) fn close(&self) {
@@ -213,10 +214,7 @@ impl Connecting {
     pub fn into_result(self) -> (Inner, Result<(), SystemError>) {
         let result = *self.result.read();
         match result {
-            ConnectResult::Connecting => (
-                Inner::Connecting(self),
-                Err(SystemError::EAGAIN_OR_EWOULDBLOCK),
-            ),
+            ConnectResult::Connecting => (Inner::Connecting(self), Err(SystemError::EAGAIN)),
             ConnectResult::Connected => (
                 Inner::Established(Established { inner: self.inner }),
                 Ok(()),
@@ -264,7 +262,7 @@ impl Connecting {
                 }
                 // Refused
                 *result = ConnectResult::Refused;
-                return true;
+                true
             })
     }
 
@@ -302,7 +300,7 @@ impl Listening {
             .unwrap();
 
         if connected.with::<smoltcp::socket::tcp::Socket, _, _>(|socket| !socket.is_active()) {
-            return Err(SystemError::EAGAIN_OR_EWOULDBLOCK);
+            return Err(SystemError::EAGAIN);
         }
 
         let remote_endpoint = connected.with::<smoltcp::socket::tcp::Socket, _, _>(|socket| {
@@ -327,7 +325,7 @@ impl Listening {
         // TODO is smoltcp socket swappable?
         core::mem::swap(&mut new_listen, connected);
 
-        return Ok((Established { inner: new_listen }, remote_endpoint));
+        Ok((Established { inner: new_listen }, remote_endpoint))
     }
 
     pub fn update_io_events(&self, pollee: &AtomicUsize) {

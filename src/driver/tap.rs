@@ -92,7 +92,7 @@ impl TapDesc {
         let mac = smoltcp::wire::EthernetAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x01]);
 
         unsafe {
-            ifr.ifr_ifru.ifru_hwaddr.sa_family = libc::ARPHRD_ETHER as u16;
+            ifr.ifr_ifru.ifru_hwaddr.sa_family = libc::ARPHRD_ETHER;
             ifr.ifr_ifru.ifru_hwaddr.sa_data[..6]
                 .copy_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x01]);
         }

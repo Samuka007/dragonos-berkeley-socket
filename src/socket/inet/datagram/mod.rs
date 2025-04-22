@@ -273,8 +273,7 @@ impl Socket for UdpSocket {
 }
 
 impl InetSocket for UdpSocket {
-    fn on_iface_events(&self) {
-    }
+    fn on_iface_events(&self) {}
 }
 
 bitflags::bitflags! {

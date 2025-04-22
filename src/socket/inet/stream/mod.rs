@@ -1,14 +1,14 @@
 use alloc::sync::{Arc, Weak};
 use core::sync::atomic::{AtomicBool, AtomicUsize};
-use system_error::SystemError;
+use linux_errnos::Errno as SystemError;
 
-use crate::libs::wait_queue::WaitQueue;
+use crate::libs::wait_queue::{wq_wait_event_interruptible, WaitQueue};
 // use crate::event_poll::EPollEventType;
 use crate::socket::common::shutdown::{ShutdownBit, ShutdownTemp};
 use crate::socket::endpoint::Endpoint;
 use crate::socket::{Socket, PMSG, PSOL};
 // use crate::sched::SchedMode;
-use crate::{libs::rwlock::RwLock, net::socket::common::shutdown::Shutdown};
+use crate::{libs::rwlock::RwLock, socket::common::shutdown::Shutdown};
 use smoltcp;
 
 mod inner;
@@ -18,7 +18,7 @@ pub use option::Options as TcpOption;
 
 use super::{InetSocket, UNSPECIFIED_LOCAL_ENDPOINT_V4};
 
-type EP = EPollEventType;
+type EP = crate::event_poll::EPollEventType;
 #[derive(Debug)]
 pub struct TcpSocket {
     inner: RwLock<Option<inner::Inner>>,
@@ -98,7 +98,7 @@ impl TcpSocket {
         if let Some(err) = err {
             return Err(err);
         }
-        return Ok(());
+        Ok(())
     }
 
     pub fn try_accept(&self) -> Result<(Arc<TcpSocket>, smoltcp::wire::IpEndpoint), SystemError> {
@@ -161,7 +161,7 @@ impl TcpSocket {
         }
 
         writer.replace(init);
-        return result;
+        result
     }
 
     // for irq use
@@ -297,7 +297,7 @@ impl Socket for TcpSocket {
             return self.do_bind(addr);
         }
         log::debug!("TcpSocket::bind: invalid endpoint");
-        return Err(SystemError::EINVAL);
+        Err(SystemError::EINVAL)
     }
 
     fn connect(&self, endpoint: Endpoint) -> Result<(), SystemError> {
@@ -307,12 +307,12 @@ impl Socket for TcpSocket {
         };
         self.start_connect(endpoint)?; // Only Nonblock or error will return error.
 
-        return loop {
+        loop {
             match self.check_connect() {
-                Err(SystemError::EAGAIN_OR_EWOULDBLOCK) => {}
+                Err(SystemError::EAGAIN) => {}
                 result => break result,
             }
-        };
+        }
     }
 
     fn poll(&self) -> usize {
@@ -323,20 +323,20 @@ impl Socket for TcpSocket {
         self.do_listen(backlog)
     }
 
-    fn accept(&self) -> Result<(Arc<SocketInode>, Endpoint), SystemError> {
+    fn accept(&self) -> Result<(Arc<dyn Socket>, Endpoint), SystemError> {
         if self.is_nonblock() {
             self.try_accept()
         } else {
             loop {
                 match self.try_accept() {
-                    Err(SystemError::EAGAIN_OR_EWOULDBLOCK) => {
-                        wq_wait_event_interruptible!(self.wait_queue, self.incoming(), {})?;
+                    Err(SystemError::EAGAIN) => {
+                        wq_wait_event_interruptible(&self.wait_queue, || self.incoming(), None)?;
                     }
                     result => break result,
                 }
             }
         }
-        .map(|(inner, endpoint)| (SocketInode::new(inner), Endpoint::Ip(endpoint)))
+        .map(|(inner, endpoint)| (inner as Arc<dyn Socket>, Endpoint::Ip(endpoint)))
     }
 
     fn recv(&self, buffer: &mut [u8], _flags: PMSG) -> Result<usize, SystemError> {

@@ -134,7 +134,7 @@ impl BoundUdp {
         to: Option<smoltcp::wire::IpEndpoint>,
     ) -> Result<usize, SystemError> {
         let remote = to.or(*self.remote.lock()).ok_or(SystemError::ENOTCONN)?;
-        
+
         self.with_mut_socket(|socket| {
             if socket.can_send() && socket.send_slice(buf, remote).is_ok() {
                 log::debug!("send {} bytes", buf.len());

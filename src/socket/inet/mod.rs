@@ -4,21 +4,21 @@ use smoltcp;
 // pub mod icmp;
 pub mod common;
 pub mod datagram;
-// pub mod stream;
 pub mod posix;
+pub mod stream;
 pub mod syscall;
 
 pub use common::BoundInner;
 pub use common::Types;
 // pub use raw::RawSocket;
 pub use datagram::UdpSocket;
+pub use stream::TcpSocket;
 
 use smoltcp::wire::IpAddress;
 use smoltcp::wire::IpEndpoint;
 use smoltcp::wire::Ipv4Address;
 // use smoltcp::wire::Ipv6Address;
 
-// pub use stream::TcpSocket;
 // pub use syscall::Inet;
 
 use super::Socket;
