@@ -23,7 +23,7 @@ fn make_udp_echo() {
         .unwrap();
     socket
         .connect(Endpoint::Ip(IpEndpoint::new(
-            IpAddress::v4(192, 168, 213, 3),
+            IpAddress::v4(192, 168, 213, 1),
             12345,
         )))
         .unwrap();
