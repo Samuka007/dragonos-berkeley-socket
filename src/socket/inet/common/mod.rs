@@ -21,8 +21,6 @@ pub enum Types {
 }
 
 lazy_static::lazy_static! {
-    /// # 所有网络接口的列表
-    /// 这个列表在中断上下文会使用到，因此需要irqsave
     pub static ref NET_DEVICES: RwLock<BTreeMap<usize, Arc<dyn Iface>>> = RwLock::new(BTreeMap::new());
 }
 

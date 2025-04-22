@@ -46,6 +46,7 @@ pub fn start_network_polling_thread() -> io::Result<thread::JoinHandle<()>> {
 
             // Process events
             for event in events.iter().take(num_events as usize) {
+                log::trace!("epoll_wait returned {} events", num_events);
                 let fd = event.u64 as RawFd;
 
                 if let Some(&device_id) = fd_to_device_id.get(&fd) {
@@ -56,11 +57,11 @@ pub fn start_network_polling_thread() -> io::Result<thread::JoinHandle<()>> {
                 }
             }
 
-            // Also poll all devices periodically regardless of events
-            // This ensures timers and other internal state are updated
-            for device in NET_DEVICES.read().values() {
-                device.poll();
-            }
+            // // Also poll all devices periodically regardless of events
+            // // This ensures timers and other internal state are updated
+            // for device in NET_DEVICES.read().values() {
+            //     device.poll();
+            // }
 
             // Small sleep to prevent CPU hogging
             thread::sleep(Duration::from_millis(1));
@@ -90,6 +91,7 @@ fn update_watched_devices(epoll_fd: RawFd, fd_to_device_id: &mut HashMap<RawFd, 
 
                 if result == 0 {
                     fd_to_device_id.insert(tap_fd, id);
+                    log::trace!("Added device fd {} to epoll", tap_fd);
                 } else {
                     log::error!(
                         "Failed to add device fd {} to epoll: {:?}",

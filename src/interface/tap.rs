@@ -1,4 +1,4 @@
-use std::{ops::DerefMut, sync::Arc, time::Instant};
+use std::{ops::DerefMut, os::fd::AsRawFd, sync::Arc, time::Instant};
 
 use smoltcp::{
     iface::{Config, Interface},
@@ -58,5 +58,9 @@ impl Iface for TapIface {
         let mut guard = self.inner.lock();
         let reference = guard.deref_mut();
         self.common.poll(reference);
+    }
+
+    fn raw_fd(&self) -> Option<std::os::unix::io::RawFd> {
+        Some(self.inner.lock().as_raw_fd())
     }
 }
