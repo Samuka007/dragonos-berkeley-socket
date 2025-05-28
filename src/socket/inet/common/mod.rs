@@ -78,6 +78,7 @@ impl BoundInner {
         T: smoltcp::socket::AnySocket<'static>,
     {
         let (iface, address) = get_ephemeral_iface(&remote);
+        log::debug!("bind_ephemeral address: {}", address);
         // let bound_port = iface.port_manager().bind_ephemeral_port(socket_type)?;
         let handle = iface.sockets().lock().add(socket);
         // let endpoint = smoltcp::wire::IpEndpoint::new(local_addr, bound_port);

@@ -250,8 +250,12 @@ impl TcpSocket {
         }
     }
 
-    fn incoming(&self) -> bool {
+    fn is_epoll_in(&self) -> bool {
         EP::from_bits_truncate(self.poll() as u32).contains(EP::EPOLLIN)
+    }
+
+    fn is_epoll_out(&self) -> bool {
+        EP::from_bits_truncate(self.poll() as u32).contains(EP::EPOLLOUT)
     }
 }
 
@@ -269,7 +273,7 @@ impl Socket for TcpSocket {
         {
             inner::Inner::Init(inner::Init::Unbound((_, ver))) => Ok(Endpoint::Ip(match ver {
                 smoltcp::wire::IpVersion::Ipv4 => UNSPECIFIED_LOCAL_ENDPOINT_V4,
-                // smoltcp::wire::IpVersion::Ipv6 => UNSPECIFIED_LOCAL_ENDPOINT_V6,
+                smoltcp::wire::IpVersion::Ipv6 => todo!("UNSPECIFIED_LOCAL_ENDPOINT_V6"),
             })),
             inner::Inner::Init(inner::Init::Bound((_, local))) => Ok(Endpoint::Ip(*local)),
             inner::Inner::Connecting(connecting) => Ok(Endpoint::Ip(connecting.get_name())),
@@ -324,27 +328,43 @@ impl Socket for TcpSocket {
     }
 
     fn accept(&self) -> Result<(Arc<dyn Socket>, Endpoint), SystemError> {
-        if self.is_nonblock() {
-            self.try_accept()
-        } else {
-            loop {
-                match self.try_accept() {
-                    Err(SystemError::EAGAIN) => {
-                        wq_wait_event_interruptible(&self.wait_queue, || self.incoming(), None)?;
-                    }
-                    result => break result,
+        loop {
+            match self.try_accept() {
+                Err(SystemError::EAGAIN) if self.is_nonblock() => break Err(SystemError::EAGAIN),
+                Err(SystemError::EAGAIN) => {
+                    wq_wait_event_interruptible(&self.wait_queue, || self.is_epoll_in(), None)?;
+                }
+                result => {
+                    break result.map(|(inner, endpoint)| {
+                        (inner as Arc<dyn Socket>, Endpoint::Ip(endpoint))
+                    })
                 }
             }
         }
-        .map(|(inner, endpoint)| (inner as Arc<dyn Socket>, Endpoint::Ip(endpoint)))
     }
 
     fn recv(&self, buffer: &mut [u8], _flags: PMSG) -> Result<usize, SystemError> {
-        self.try_recv(buffer)
+        loop {
+            match self.try_recv(buffer) {
+                Err(SystemError::EAGAIN) if self.is_nonblock() => break Err(SystemError::EAGAIN),
+                Err(SystemError::EAGAIN) => {
+                    wq_wait_event_interruptible(&self.wait_queue, || self.is_epoll_in(), None)?;
+                }
+                result => break result,
+            }
+        }
     }
 
     fn send(&self, buffer: &[u8], _flags: PMSG) -> Result<usize, SystemError> {
-        self.try_send(buffer)
+        loop {
+            match self.try_send(buffer) {
+                Err(SystemError::EAGAIN) if self.is_nonblock() => break Err(SystemError::EAGAIN),
+                Err(SystemError::EAGAIN) => {
+                    wq_wait_event_interruptible(&self.wait_queue, || self.is_epoll_out(), None)?;
+                }
+                result => break result,
+            }
+        }
     }
 
     fn send_buffer_size(&self) -> usize {

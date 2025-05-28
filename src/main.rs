@@ -1,4 +1,4 @@
-use std::{net::Ipv4Addr, sync::Arc};
+use std::{io::{self, Read}, net::Ipv4Addr, sync::Arc};
 
 use berkeley_socket::{
     driver::{irq::start_network_polling_thread, tap::TapDevice},
@@ -80,6 +80,69 @@ fn make_tcp_echo() {
     }
 }
 
+fn make_request() {
+    log::info!("Input a valid IP address and port to connect to:");
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap();
+    let parts: Vec<&str> = input.trim().split(':').collect();
+    if parts.len() != 2 {
+        log::error!("Invalid input format. Use <IP>:<port>.");
+        return;
+    }
+    let ip: Ipv4Addr = match parts[0].parse() {
+        Ok(ip) => ip,
+        Err(_) => {
+            log::error!("Invalid IP address.");
+            return;
+        }
+    };
+    let port: u16 = match parts[1].parse() {
+        Ok(port) => port,
+        Err(_) => {
+            log::error!("Invalid port number.");
+            return;
+        }
+    };
+    let endpoint = Endpoint::Ip(IpEndpoint::new(IpAddress::Ipv4(Ipv4Addr::from(ip)), port));
+
+    let socket = Inet::socket(SOCK::Stream, 0).unwrap();
+    match socket.connect(endpoint) {
+        Ok(_) => {
+            log::info!("Connected to {}:{}", ip, port);
+            let mut buffer = [0u8; 1024];
+            loop {
+                let len = io::stdin().read(&mut buffer).unwrap();
+                if len == 0 {
+                    break; // EOF
+                }
+                let sent_len = socket.write(&buffer[..len]).unwrap();
+                log::info!("Sent {} bytes", sent_len);
+                match socket.read(&mut buffer) {
+                    Ok(received_len) => {
+                        if received_len == 0 {
+                            log::info!("Socket closed by remote peer.");
+                            break;
+                        }
+                        log::info!(
+                            "Received {} bytes: {}",
+                            received_len,
+                            String::from_utf8_lossy(&buffer[..received_len])
+                        );
+                    }
+                    Err(e) => {
+                        log::error!("Socket read error: {}", e);
+                        break;
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("Failed to connect: {}", e);
+        }
+    }
+    log::info!("Connection closed.");
+}
+
 fn main() {
     env_logger::init();
     let device = TapDevice::new("tap0", smoltcp::phy::Medium::Ethernet).unwrap();
@@ -105,6 +168,24 @@ fn main() {
     let tcp = std::thread::spawn(move || {
         make_tcp_echo();
     });
+
+    loop {
+        let char = io::stdin().bytes().next().unwrap().unwrap();
+        match char {
+            b'q' | b'Q' => {
+                log::info!("Exiting...");
+                break;
+            }
+            b'r' => {
+                make_request();
+            }
+            _ => {
+                log::info!("Press 'q' to exit.");
+            }
+        }
+    }
+
+    // Optionally join threads before exiting
     udp.join().unwrap();
     tcp.join().unwrap();
 }

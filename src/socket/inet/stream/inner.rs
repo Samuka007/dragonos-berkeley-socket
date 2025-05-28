@@ -45,16 +45,6 @@ impl Init {
         Init::Unbound((Box::new(new_smoltcp_socket()), ver))
     }
 
-    /// 传入一个已经绑定的socket
-    pub(super) fn new_bound(inner: socket::inet::BoundInner) -> Self {
-        let endpoint = inner.with::<smoltcp::socket::tcp::Socket, _, _>(|socket| {
-            socket
-                .local_endpoint()
-                .expect("A Bound Socket Must Have A Local Endpoint")
-        });
-        Init::Bound((inner, endpoint))
-    }
-
     pub(super) fn bind(
         self,
         local_endpoint: smoltcp::wire::IpEndpoint,
@@ -116,7 +106,7 @@ impl Init {
                 .map_err(|_| SystemError::ECONNREFUSED)
         });
         match result {
-            Ok(_) => Ok(Connecting::new(inner)),
+            Ok(_) => Ok(Connecting::new(inner, local.addr.version())),
             Err(err) => Err((Init::Bound((inner, local)), err)),
         }
     }
@@ -193,13 +183,18 @@ enum ConnectResult {
 #[derive(Debug)]
 pub struct Connecting {
     inner: socket::inet::BoundInner,
+    version: smoltcp::wire::IpVersion,
     result: RwLock<ConnectResult>,
 }
 
 impl Connecting {
-    fn new(inner: socket::inet::BoundInner) -> Self {
+    fn new(
+        inner: socket::inet::BoundInner, 
+        version: smoltcp::wire::IpVersion,
+    ) -> Self {
         Connecting {
             inner,
+            version,
             result: RwLock::new(ConnectResult::Connecting),
         }
     }
@@ -212,6 +207,7 @@ impl Connecting {
     }
 
     pub fn into_result(self) -> (Inner, Result<(), SystemError>) {
+        // log::debug!("Into_result {:?}", self.inner);
         let result = *self.result.read();
         match result {
             ConnectResult::Connecting => (Inner::Connecting(self), Err(SystemError::EAGAIN)),
@@ -220,7 +216,7 @@ impl Connecting {
                 Ok(()),
             ),
             ConnectResult::Refused => (
-                Inner::Init(Init::new_bound(self.inner)),
+                Inner::Init(Init::new(self.version)),
                 Err(SystemError::ECONNREFUSED),
             ),
         }
@@ -237,26 +233,25 @@ impl Connecting {
     /// _exactly_ once. The caller is responsible for not missing this event.
     #[must_use]
     pub(super) fn update_io_events(&self) -> bool {
-        // if matches!(*self.result.read_irqsave(), ConnectResult::Connecting) {
-        //     return false;
-        // }
-
         self.inner
             .with_mut(|socket: &mut smoltcp::socket::tcp::Socket| {
                 let mut result = self.result.write();
                 if matches!(*result, ConnectResult::Refused | ConnectResult::Connected) {
-                    return false; // Already connected or refused
+                    log::warn!(
+                        "update_io_events called on a Connecting socket that is already {:?}",
+                        *result
+                    );
+                    return true; // Already connected or refused, so shouldn't in this state, trigger update!
                 }
 
                 // Connected
-                if socket.can_send() {
+                if socket.may_send() {
                     log::debug!("can send");
                     *result = ConnectResult::Connected;
                     return true;
                 }
                 // Connecting
                 if socket.is_open() {
-                    log::debug!("connecting");
                     *result = ConnectResult::Connecting;
                     return false;
                 }
@@ -416,17 +411,39 @@ impl Established {
     pub fn recv_slice(&self, buf: &mut [u8]) -> Result<usize, SystemError> {
         self.inner
             .with_mut::<smoltcp::socket::tcp::Socket, _, _>(|socket| {
-                if socket.can_send() {
-                    match socket.recv_slice(buf) {
-                        Ok(size) => Ok(size),
-                        Err(tcp::RecvError::InvalidState) => {
-                            log::error!("TcpSocket::try_recv: InvalidState");
-                            Err(SystemError::ENOTCONN)
+                match socket.recv_slice(buf) {
+                    Ok(size) => Ok(size),
+                    Err(tcp::RecvError::InvalidState) => {
+                        socket.may_recv();
+                        use smoltcp::socket::tcp::State;
+                        match socket.state() {
+                            // Not ENOTCONN since the socket is in established state
+                            State::Closed => Err(SystemError::ECONNRESET), 
+
+                            // remote sent FIN
+                            State::Closing 
+                            | State::LastAck
+                            | State::TimeWait
+                            | State::CloseWait => {
+                                log::debug!("TCP state: {:?}, recv will return 0", socket.state());
+                                Ok(0) // return 0 to indicate EOF
+                            }
+
+                            // Socket should not be in these state
+                            State::Listen | State::SynReceived | State::SynSent => {
+                                log::error!("Unexpected TCP state: {:?}", socket.state());
+                                Err(SystemError::ECONNRESET) // return reset to drop this error socket, not stadard behavior
+                            },
+
+                            // already checked in `can_recv()`
+                            State::Established
+                            | State::FinWait1
+                            | State::FinWait2 => {
+                                unreachable!("Should be able to recv: {:?}", socket.state())
+                            }
                         }
-                        Err(tcp::RecvError::Finished) => Ok(0),
                     }
-                } else {
-                    Err(SystemError::ENOBUFS)
+                    Err(tcp::RecvError::Finished) => Ok(0),
                 }
             })
     }
@@ -434,12 +451,37 @@ impl Established {
     pub fn send_slice(&self, buf: &[u8]) -> Result<usize, SystemError> {
         self.inner
             .with_mut::<smoltcp::socket::tcp::Socket, _, _>(|socket| {
-                if socket.can_send() {
-                    socket
-                        .send_slice(buf)
-                        .map_err(|_| SystemError::ECONNABORTED)
-                } else {
-                    Err(SystemError::ENOBUFS)
+                match socket.send_slice(buf) {
+                    Ok(0) => Err(SystemError::EAGAIN),
+                    Ok(size) => Ok(size),
+                    Err(tcp::SendError::InvalidState) => {
+                        use smoltcp::socket::tcp::State;
+                        match socket.state() {
+                            // Not ENOTCONN since the socket is in established state
+                            State::Closed => Err(SystemError::ECONNRESET),
+
+                            // Socket is already closed by us
+                            State::LastAck 
+                            | State::TimeWait 
+                            | State::Closing
+                            | State::FinWait1
+                            | State::FinWait2 => Err(SystemError::EPIPE),
+
+                            // Socket should not be in these state
+                            State::Listen | State::SynReceived | State::SynSent => {
+                                log::error!("Unexpected TCP state: {:?}", socket.state());
+                                Err(SystemError::ECONNRESET) // return reset to drop this error socket, not stadard behavior
+                            },
+
+                            // these states are already checked in `can_send()`
+                            State::Established
+                            // In CLOSE-WAIT, the remote endpoint has closed our receive half of the connection
+                            // but we still can transmit indefinitely.
+                            | State::CloseWait => {
+                                unreachable!("Should be able to send: {:?}", socket.state())
+                            }
+                        }
+                    }
                 }
             })
     }

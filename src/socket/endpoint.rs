@@ -11,6 +11,7 @@ pub enum Endpoint {
     // LinkLayer(LinkLayerEndpoint),
     /// 网络层端点
     Ip(IpEndpoint),
+    Other,
     // /// inode端点,Unix实际保存的端点
     // Inode((Arc<socket::SocketInode>, String)),
     // /// Unix传递id索引和path所用的端点
